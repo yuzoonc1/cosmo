@@ -452,6 +452,25 @@ export class GraphQLToProtoTextVisitor {
     // Third: Process all complex types from the message queue in a single pass
     this.processMessageQueue();
 
+    // Add wrapper import if needed, at the correct position
+    if (this.usesWrapperTypes) {
+      // Find the position after the package declaration
+      const packageIndex = this.protoText.findIndex(line => line.startsWith('package '));
+      if (packageIndex !== -1) {
+        // Insert after package line and any existing options, but before service
+        let insertIndex = packageIndex + 1;
+        
+        // Skip over any existing options and empty lines
+        while (insertIndex < this.protoText.length && 
+               (this.protoText[insertIndex].startsWith('option ') || 
+                this.protoText[insertIndex].trim() === '')) {
+          insertIndex++;
+        }
+        
+        this.protoText.splice(insertIndex, 0, 'import "google/protobuf/wrappers.proto";', '');
+      }
+    }
+
     // Store the generated lock data for retrieval
     this.generatedLockData = this.lockManager.getLockData();
 
@@ -1354,12 +1373,16 @@ Example:
    * between unset fields and zero values.
    *
    * @param graphqlType - The GraphQL type to convert
+   * @param ignoreWrapperTypes - If true, do not use wrapper types for nullable scalar fields
    * @returns The corresponding Protocol Buffer type name
    */
-  private getProtoTypeFromGraphQL(graphqlType: GraphQLType): string {
+  private getProtoTypeFromGraphQL(graphqlType: GraphQLType, ignoreWrapperTypes: boolean = false): string {
 
     // For nullable scalar types, use wrapper types
     if (isScalarType(graphqlType)) {
+      if(ignoreWrapperTypes){
+        return SCALAR_TYPE_MAP[graphqlType.name] || 'string';
+      }
       this.usesWrapperTypes = true; // Track that we're using wrapper types
       return SCALAR_WRAPPER_TYPE_MAP[graphqlType.name] || 'google.protobuf.StringValue';
     }
@@ -1410,7 +1433,7 @@ Example:
         return wrapperName;
       }
 
-      return this.getProtoTypeFromGraphQL(innerType);
+      return this.getProtoTypeFromGraphQL(innerType, true);
     }
 
     // Named types (object, interface, union, input)
@@ -1463,7 +1486,7 @@ Example:
     const fieldNumber = this.getFieldNumber(wrapperName, 'result', 1);
 
     // For the inner type, we need to get the proto type for the base type
-    const protoType = this.getProtoTypeFromGraphQL(innerMostType);
+    const protoType = this.getProtoTypeFromGraphQL(baseType, true);
     messageLines.push(`  repeated ${protoType} result = ${fieldNumber};`);
 
     messageLines.push('}');
